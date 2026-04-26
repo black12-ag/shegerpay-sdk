@@ -38,6 +38,7 @@ var (
 
 // VerificationResult represents the result of a payment verification
 type VerificationResult struct {
+	Verified      bool    `json:"verified"`
 	Valid         bool    `json:"valid"`
 	Status        string  `json:"status"`
 	Provider      string  `json:"provider,omitempty"`
@@ -54,6 +55,7 @@ type VerifyParams struct {
 	Amount        float64
 	MerchantName  string
 	SubProvider   string
+	SenderAccount string
 }
 
 // Client is the ShegerPay API client
@@ -121,14 +123,14 @@ func (c *Client) Verify(params VerifyParams) (*VerificationResult, error) {
 		return nil, errors.New("Amount is required")
 	}
 	
-	// Auto-detect provider
 	provider := params.Provider
 	if provider == "" {
-		if strings.HasPrefix(strings.ToUpper(params.TransactionID), "FT") {
-			provider = "cbe"
-		} else {
-			provider = "telebirr"
+		if strings.Contains(strings.ToLower(params.TransactionID), "cs.bankofabyssinia.com/slip/?trx=") {
+			provider = "boa"
 		}
+	}
+	if provider == "" {
+		return nil, errors.New("Provider is required for ambiguous transaction references. Pass Provider explicitly or use QuickVerify")
 	}
 	
 	merchantName := params.MerchantName
@@ -144,6 +146,9 @@ func (c *Client) Verify(params VerifyParams) (*VerificationResult, error) {
 	
 	if params.SubProvider != "" {
 		data.Set("sub_provider", params.SubProvider)
+	}
+	if params.SenderAccount != "" {
+		data.Set("sender_account", params.SenderAccount)
 	}
 	
 	result := &VerificationResult{}
@@ -182,7 +187,7 @@ func (c *Client) request(method, path string, data url.Values, result interface{
 		return err
 	}
 	
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("X-API-Key", c.apiKey)
 	req.Header.Set("User-Agent", "ShegerPay-Go-SDK/1.0")
 	if method == "POST" {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -4,7 +4,7 @@
  * 
  * Usage:
  *   let client = ShegerPay(apiKey: "sk_test_xxx")
- *   let result = try await client.verify(transactionId: "FT123456", amount: 100)
+ *   let result = try await client.verify(transactionId: "FT123456", amount: 100, provider: "cbe")
  */
 
 import Foundation
@@ -35,6 +35,7 @@ public enum ShegerPayError: Error, LocalizedError {
 // MARK: - Models
 
 public struct VerificationResult: Codable {
+    public let verified: Bool?
     public let valid: Bool
     public let status: String
     public let provider: String?
@@ -45,7 +46,7 @@ public struct VerificationResult: Codable {
     public let payer: String?
     
     enum CodingKeys: String, CodingKey {
-        case valid, status, provider, amount, reason, mode, payer
+        case verified, valid, status, provider, amount, reason, mode, payer
         case transactionId = "transaction_id"
     }
 }
@@ -98,26 +99,44 @@ public class ShegerPay {
         transactionId: String,
         amount: Double,
         provider: String? = nil,
-        merchantName: String? = nil
+        merchantName: String? = nil,
+        senderAccount: String? = nil
     ) async throws -> VerificationResult {
-        let detectedProvider = provider ?? (transactionId.uppercased().hasPrefix("FT") ? "cbe" : "telebirr")
+        let detectedProvider = provider ?? (transactionId.lowercased().contains("cs.bankofabyssinia.com/slip/?trx=") ? "boa" : nil)
+        guard let detectedProvider else {
+            throw ShegerPayError.validationError("provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().")
+        }
         
-        let params: [String: String] = [
+        var params: [String: String] = [
             "provider": detectedProvider,
             "transaction_id": transactionId,
             "amount": String(amount),
             "merchant_name": merchantName ?? "ShegerPay Verification"
         ]
+        if let senderAccount, !senderAccount.isEmpty {
+            params["sender_account"] = senderAccount
+        }
         
         return try await request(method: "POST", path: "/api/v1/verify", params: params)
     }
     
     /// Quick verification with auto-detected provider
-    public func quickVerify(transactionId: String, amount: Double) async throws -> VerificationResult {
-        let params: [String: String] = [
+    public func quickVerify(
+        transactionId: String,
+        amount: Double,
+        expectedProvider: String? = nil,
+        senderAccount: String? = nil
+    ) async throws -> VerificationResult {
+        var params: [String: String] = [
             "transaction_id": transactionId,
             "amount": String(amount)
         ]
+        if let expectedProvider, !expectedProvider.isEmpty {
+            params["expected_provider"] = expectedProvider
+        }
+        if let senderAccount, !senderAccount.isEmpty {
+            params["sender_account"] = senderAccount
+        }
         return try await request(method: "POST", path: "/api/v1/quick-verify", params: params)
     }
     
@@ -156,7 +175,7 @@ public class ShegerPay {
         
         var request = URLRequest(url: urlComponents.url!)
         request.httpMethod = method
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("ShegerPay-Swift-SDK/1.0", forHTTPHeaderField: "User-Agent")
         
@@ -186,7 +205,7 @@ public class ShegerPay {
     ) async throws -> T {
         var request = URLRequest(url: URL(string: baseURL + path)!)
         request.httpMethod = method
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: json)
         

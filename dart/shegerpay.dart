@@ -3,7 +3,7 @@
 ///
 /// Usage:
 ///   final client = ShegerPay('sk_test_xxx');
-///   final result = await client.verify('FT123456', 100.0);
+///   final result = await client.verify('FT123456', 100.0, provider: 'cbe');
 
 library shegerpay;
 
@@ -32,6 +32,7 @@ class ValidationException extends ShegerPayException {
 // ---------- Models ----------
 
 class VerificationResult {
+  final bool verified;
   final bool valid;
   final String status;
   final String? provider;
@@ -42,6 +43,7 @@ class VerificationResult {
   final String? payer;
 
   VerificationResult({
+    required this.verified,
     required this.valid,
     required this.status,
     this.provider,
@@ -54,6 +56,7 @@ class VerificationResult {
 
   factory VerificationResult.fromJson(Map<String, dynamic> json) {
     return VerificationResult(
+      verified: json['verified'] ?? json['valid'] ?? false,
       valid: json['valid'] ?? false,
       status: json['status'] ?? 'unknown',
       provider: json['provider'],
@@ -130,16 +133,20 @@ class ShegerPay {
   ///
   /// [transactionId] Bank transaction reference
   /// [amount] Expected amount in ETB
-  /// [provider] Optional - 'cbe' or 'telebirr' (auto-detected if not provided)
+  /// [provider] Optional explicit provider. Required unless using a BOA receipt URL.
   /// [merchantName] Optional - Your bank account name
   Future<VerificationResult> verify(
     String transactionId,
     double amount, {
     String? provider,
     String? merchantName,
+    String? senderAccount,
   }) async {
     final detectedProvider = provider ??
-        (transactionId.toUpperCase().startsWith('FT') ? 'cbe' : 'telebirr');
+        (transactionId.toLowerCase().contains('cs.bankofabyssinia.com/slip/?trx=') ? 'boa' : null);
+    if (detectedProvider == null) {
+      throw ValidationException('provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().');
+    }
 
     final params = {
       'provider': detectedProvider,
@@ -147,17 +154,31 @@ class ShegerPay {
       'amount': amount.toString(),
       'merchant_name': merchantName ?? 'ShegerPay Verification',
     };
+    if (senderAccount != null && senderAccount.isNotEmpty) {
+      params['sender_account'] = senderAccount;
+    }
 
     final response = await _request('POST', '/api/v1/verify', params);
     return VerificationResult.fromJson(response);
   }
 
   /// Quick verification with auto-detected provider
-  Future<VerificationResult> quickVerify(String transactionId, double amount) async {
+  Future<VerificationResult> quickVerify(
+    String transactionId,
+    double amount, {
+    String? expectedProvider,
+    String? senderAccount,
+  }) async {
     final params = {
       'transaction_id': transactionId,
       'amount': amount.toString(),
     };
+    if (expectedProvider != null && expectedProvider.isNotEmpty) {
+      params['expected_provider'] = expectedProvider;
+    }
+    if (senderAccount != null && senderAccount.isNotEmpty) {
+      params['sender_account'] = senderAccount;
+    }
     final response = await _request('POST', '/api/v1/quick-verify', params);
     return VerificationResult.fromJson(response);
   }
@@ -237,7 +258,7 @@ class ShegerPay {
   }
 
   Map<String, String> _headers() => {
-    'Authorization': 'Bearer $apiKey',
+    'X-API-Key': apiKey,
     'Content-Type': 'application/x-www-form-urlencoded',
     'User-Agent': 'ShegerPay-Dart-SDK/1.0',
   };
@@ -249,6 +270,10 @@ class ShegerPay {
     if (response.statusCode == 400) {
       final error = jsonDecode(response.body);
       throw ValidationException(error['detail'] ?? 'Validation error');
+    }
+    if ([402, 403, 429, 503].contains(response.statusCode) || response.statusCode >= 500) {
+      final error = jsonDecode(response.body);
+      throw ShegerPayException(error['detail'] ?? error['message'] ?? 'Request failed');
     }
     return jsonDecode(response.body);
   }

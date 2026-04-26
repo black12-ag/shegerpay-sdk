@@ -21,6 +21,7 @@ class VerificationResult:
     """Result of a payment verification"""
     valid: bool
     status: str
+    verified: bool = False
     provider: Optional[str] = None
     transaction_id: Optional[str] = None
     amount: Optional[float] = None
@@ -33,6 +34,7 @@ class VerificationResult:
         return cls(
             valid=data.get('valid', False),
             status=data.get('status', 'unknown'),
+            verified=data.get('verified', data.get('valid', False)),
             provider=data.get('provider'),
             transaction_id=data.get('transaction_id'),
             amount=data.get('amount'),
@@ -110,7 +112,7 @@ class ShegerPay:
         
         self._session = requests.Session()
         self._session.headers.update({
-            'Authorization': f'Bearer {api_key}',
+            'X-API-Key': api_key,
             'Content-Type': 'application/x-www-form-urlencoded',
             'User-Agent': 'ShegerPay-Python-SDK/1.0'
         })
@@ -121,7 +123,8 @@ class ShegerPay:
         amount: float,
         provider: str = None,
         merchant_name: str = None,
-        sub_provider: str = None
+        sub_provider: str = None,
+        sender_account: str = None
     ) -> VerificationResult:
         """
         Verify a payment transaction.
@@ -129,9 +132,10 @@ class ShegerPay:
         Args:
             transaction_id: Bank transaction reference (e.g., FT123456789)
             amount: Expected amount in ETB
-            provider: Payment provider (cbe, telebirr, bank_transfer). Auto-detected if not provided.
+            provider: Payment provider (cbe, telebirr, boa, bank_transfer). Required unless using a BOA receipt URL.
             merchant_name: Your registered bank account name
             sub_provider: Sub-provider for bank transfers (e.g., Payoneer)
+            sender_account: Required for BOA verification
             
         Returns:
             VerificationResult with valid=True if payment is verified
@@ -144,12 +148,11 @@ class ShegerPay:
                 merchant_name="My Shop"
             )
         """
-        # Auto-detect provider if not specified
         if not provider:
-            if transaction_id.upper().startswith("FT"):
-                provider = "cbe"
+            if "cs.bankofabyssinia.com/slip/?trx=" in transaction_id.lower():
+                provider = "boa"
             else:
-                provider = "telebirr"
+                raise ValidationError("provider is required for ambiguous transaction references. Pass provider explicitly or use quick_verify().")
         
         data = {
             'provider': provider,
@@ -164,19 +167,27 @@ class ShegerPay:
             
         if sub_provider:
             data['sub_provider'] = sub_provider
+        if sender_account:
+            data['sender_account'] = sender_account
         
         response = self._request('POST', '/api/v1/verify', data=data)
         return VerificationResult.from_response(response)
     
-    def quick_verify(self, transaction_id: str, amount: float) -> VerificationResult:
+    def quick_verify(
+        self,
+        transaction_id: str,
+        amount: float,
+        expected_provider: str = None,
+        sender_account: str = None
+    ) -> VerificationResult:
         """
         Quick verification with auto-detected provider.
-        
-        Automatically detects CBE (FT...) or Telebirr from transaction ID format.
         
         Args:
             transaction_id: Bank transaction reference
             amount: Expected amount
+            expected_provider: Optional provider hint
+            sender_account: Required when quick-verifying BOA receipts
             
         Returns:
             VerificationResult
@@ -185,9 +196,48 @@ class ShegerPay:
             'transaction_id': transaction_id,
             'amount': amount
         }
+        if expected_provider:
+            data['expected_provider'] = expected_provider
+        if sender_account:
+            data['sender_account'] = sender_account
         
         response = self._request('POST', '/api/v1/quick-verify', data=data)
         return VerificationResult.from_response(response)
+
+    def verify_image(
+        self,
+        screenshot_path: str,
+        amount: float,
+        provider: str = None,
+        merchant_name: str = None,
+        transaction_id: str = None,
+        phone_number: str = None,
+        sender_account: str = None
+    ) -> VerificationResult:
+        """
+        Verify a receipt screenshot/PDF using OCR.
+        """
+        data = {'amount': amount}
+        if provider: data['provider'] = provider
+        if merchant_name: data['merchant_name'] = merchant_name
+        if transaction_id: data['transaction_id'] = transaction_id
+        if phone_number: data['phone_number'] = phone_number
+        if sender_account: data['sender_account'] = sender_account
+
+        old_content_type = self._session.headers.pop('Content-Type', None)
+        try:
+            with open(screenshot_path, 'rb') as screenshot:
+                response = self._session.post(
+                    f"{self.base_url}/api/v1/verify-image",
+                    data=data,
+                    files={'screenshot': screenshot},
+                    timeout=self.timeout
+                )
+            parsed = self._handle_response(response)
+            return VerificationResult.from_response(parsed)
+        finally:
+            if old_content_type:
+                self._session.headers['Content-Type'] = old_content_type
     
     def get_history(self, limit: int = 50) -> List[Transaction]:
         """
@@ -574,6 +624,34 @@ class ShegerPay:
             Service status, mode (sandbox/live), and feature availability
         """
         return self._request('GET', '/api/v1/paypal/status')
+
+    def paypal_get_wallet_balance(self) -> Dict[str, Any]:
+        """Get PayPal wallet balance."""
+        return self._request('GET', '/api/v1/paypal/wallet/balance')
+
+    def paypal_list_wallet_transactions(self, limit: int = 50) -> Dict[str, Any]:
+        """List PayPal wallet transactions."""
+        return self._request('GET', '/api/v1/paypal/wallet/transactions', params={'limit': limit})
+
+    def paypal_request_payout(
+        self,
+        amount: float,
+        recipient_email: str,
+        currency: str = "USD",
+        note: str = None
+    ) -> Dict[str, Any]:
+        """Request a PayPal payout."""
+        self._session.headers['Content-Type'] = 'application/json'
+        data = {'amount': amount, 'currency': currency, 'recipient_email': recipient_email}
+        if note:
+            data['note'] = note
+        response = self._request('POST', '/api/v1/paypal/payouts/request', data=data)
+        self._session.headers['Content-Type'] = 'application/x-www-form-urlencoded'
+        return response
+
+    def paypal_list_payouts(self) -> Dict[str, Any]:
+        """List PayPal payout requests."""
+        return self._request('GET', '/api/v1/paypal/payouts')
     
     def _request(
         self, 
@@ -606,22 +684,28 @@ class ShegerPay:
                     timeout=self.timeout
                 )
             
-            if response.status_code == 401:
-                raise AuthenticationError("Invalid API key", status_code=401)
-            
-            if response.status_code == 400:
-                error = response.json()
-                raise ValidationError(error.get('detail', 'Validation error'), status_code=400)
-            
-            if response.status_code >= 500:
-                raise ShegerPayError("Server error", status_code=response.status_code)
-            
-            return response.json()
+            return self._handle_response(response)
             
         except requests.exceptions.Timeout:
             raise ShegerPayError("Request timed out")
         except requests.exceptions.ConnectionError:
             raise ShegerPayError("Connection error")
+
+    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
+        """Parse API response and raise SDK-specific errors."""
+        if response.status_code == 401:
+            raise AuthenticationError("Invalid API key", status_code=401)
+        if response.status_code == 400:
+            error = response.json()
+            raise ValidationError(error.get('detail') or error.get('message') or 'Validation error', status_code=400)
+        if response.status_code in (402, 403, 429, 503) or response.status_code >= 500:
+            try:
+                error = response.json()
+                message = error.get('detail') or error.get('message') or 'Request failed'
+            except Exception:
+                message = 'Server error' if response.status_code >= 500 else 'Request failed'
+            raise ShegerPayError(message, status_code=response.status_code)
+        return response.json()
 
     # =========================================================================
     # PAYMENT LINKS
@@ -707,16 +791,12 @@ class ShegerPay:
     # =========================================================================
     
     def get_wallet_balance(self) -> Dict[str, Any]:
-        """Get multi-currency wallet balances."""
-        return self._request("GET", "/api/v1/wallets/balances")
+        """Get PayPal wallet balance. Non-PayPal wallet rails are private/assisted."""
+        return self.paypal_get_wallet_balance()
 
     def convert_currency(self, from_currency: str, to_currency: str, amount: float) -> Dict[str, Any]:
-        """Convert currency within wallet."""
-        self._session.headers['Content-Type'] = 'application/json'
-        payload = {"from_currency": from_currency, "to_currency": to_currency, "amount": amount}
-        response = self._request("POST", "/api/v1/wallets/convert", data=payload)
-        self._session.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-        return response
+        """Currency conversion is not part of the public SDK."""
+        raise ShegerPayError("Currency conversion is private/assisted and is intentionally not exposed in the public SDK.", status_code=400)
 
     # =========================================================================
     # REFUNDS
@@ -762,17 +842,15 @@ class ShegerPay:
     # =========================================================================
     
     def request_payout(self, amount: float, currency: str, method: str = 'bank_transfer', **kwargs) -> Dict[str, Any]:
-        """Request a payout."""
-        self._session.headers['Content-Type'] = 'application/json'
-        data = {'amount': amount, 'currency': currency, 'method': method, **kwargs}
-        response = self._request('POST', '/api/v1/payouts', data=data)
-        self._session.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-        return response
+        """Request a PayPal payout."""
+        recipient_email = kwargs.get('recipient_email') or kwargs.get('recipientEmail')
+        if not recipient_email:
+            raise ValidationError("recipient_email is required for PayPal payouts")
+        return self.paypal_request_payout(amount=amount, recipient_email=recipient_email, currency=currency, note=kwargs.get('note'))
     
     def list_payouts(self, status: str = None) -> List[Dict[str, Any]]:
-        """List payout requests."""
-        params = {'status': status} if status else {}
-        return self._request('GET', '/api/v1/payouts', params=params)
+        """List PayPal payout requests."""
+        return self.paypal_list_payouts()
 
     # =========================================================================
     # TRANSACTIONS
@@ -791,11 +869,11 @@ class ShegerPay:
     
     def get_subscription(self) -> Dict[str, Any]:
         """Get your current ShegerPay subscription."""
-        return self._request('GET', '/api/v1/subscriptions/current')
+        return self._request('GET', '/api/v1/subscriptions/status')
     
     def get_usage(self) -> Dict[str, Any]:
         """Get your API usage for current billing period."""
-        return self._request('GET', '/api/v1/subscriptions/usage')
+        return self._request('GET', '/api/v1/analytics/api-usage')
 
     # =========================================================================
     # TWO-FACTOR AUTHENTICATION
@@ -843,24 +921,12 @@ class ShegerPay:
     # =========================================================================
     
     def add_wise_account(self, email: str, label: str = None) -> Dict[str, Any]:
-        """Add a Wise account."""
-        self._session.headers['Content-Type'] = 'application/json'
-        data = {'provider': 'wise', 'email': email}
-        if label:
-            data['label'] = label
-        response = self._request('POST', '/api/v1/international/wallet-accounts', data=data)
-        self._session.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-        return response
+        """Wise account setup is private/assisted and not exposed in the public SDK."""
+        raise ShegerPayError("Wise account setup is private/assisted and is intentionally not exposed in the public SDK.", status_code=400)
     
     def add_payoneer_account(self, email: str, label: str = None) -> Dict[str, Any]:
-        """Add a Payoneer account."""
-        self._session.headers['Content-Type'] = 'application/json'
-        data = {'provider': 'payoneer', 'email': email}
-        if label:
-            data['label'] = label
-        response = self._request('POST', '/api/v1/international/wallet-accounts', data=data)
-        self._session.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-        return response
+        """Payoneer account setup is private/assisted and not exposed in the public SDK."""
+        raise ShegerPayError("Payoneer account setup is private/assisted and is intentionally not exposed in the public SDK.", status_code=400)
     
     def get_gmail_status(self) -> Dict[str, Any]:
         """Check Gmail forwarding bot status."""
@@ -957,7 +1023,3 @@ def verify(api_key: str, transaction_id: str, amount: float, **kwargs) -> Verifi
 
 __version__ = "2.1.0"
 __all__ = ['ShegerPay', 'VerificationResult', 'Transaction', 'Provider', 'ShegerPayError', 'verify']
-
-
-
-

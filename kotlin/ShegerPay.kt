@@ -4,7 +4,7 @@
  * 
  * Usage:
  *   val client = ShegerPay("sk_test_xxx")
- *   val result = client.verify("FT123456", 100.0)
+ *   val result = client.verify("FT123456", 100.0, provider = "cbe")
  */
 
 package com.shegerpay.sdk
@@ -21,6 +21,7 @@ class AuthenticationException(message: String) : ShegerPayException(message)
 
 @Serializable
 data class VerificationResult(
+    val verified: Boolean = false,
     val valid: Boolean,
     val status: String,
     val provider: String? = null,
@@ -52,17 +53,24 @@ class ShegerPay(
         transactionId: String,
         amount: Double,
         provider: String? = null,
-        merchantName: String? = null
+        merchantName: String? = null,
+        senderAccount: String? = null
     ): VerificationResult {
-        val detectedProvider = provider 
-            ?: if (transactionId.uppercase().startsWith("FT")) "cbe" else "telebirr"
+        val detectedProvider = provider
+            ?: if (transactionId.lowercase().contains("cs.bankofabyssinia.com/slip/?trx=")) "boa" else null
+        require(!detectedProvider.isNullOrEmpty()) {
+            "provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify()."
+        }
         
-        val params = mapOf(
+        val params = mutableMapOf(
             "provider" to detectedProvider,
             "transaction_id" to transactionId,
             "amount" to amount.toString(),
             "merchant_name" to (merchantName ?: "ShegerPay Verification")
         )
+        if (!senderAccount.isNullOrEmpty()) {
+            params["sender_account"] = senderAccount
+        }
         
         return request("POST", "/api/v1/verify", params)
     }
@@ -70,11 +78,22 @@ class ShegerPay(
     /**
      * Quick verification with auto-detected provider
      */
-    fun quickVerify(transactionId: String, amount: Double): VerificationResult {
-        val params = mapOf(
+    fun quickVerify(
+        transactionId: String,
+        amount: Double,
+        expectedProvider: String? = null,
+        senderAccount: String? = null
+    ): VerificationResult {
+        val params = mutableMapOf(
             "transaction_id" to transactionId,
             "amount" to amount.toString()
         )
+        if (!expectedProvider.isNullOrEmpty()) {
+            params["expected_provider"] = expectedProvider
+        }
+        if (!senderAccount.isNullOrEmpty()) {
+            params["sender_account"] = senderAccount
+        }
         return request("POST", "/api/v1/quick-verify", params)
     }
     
@@ -83,7 +102,7 @@ class ShegerPay(
         val conn = url.openConnection() as HttpURLConnection
         
         conn.requestMethod = method
-        conn.setRequestProperty("Authorization", "Bearer $apiKey")
+        conn.setRequestProperty("X-API-Key", apiKey)
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
         conn.setRequestProperty("User-Agent", "ShegerPay-Kotlin-SDK/1.0")
         conn.connectTimeout = 30000

@@ -65,7 +65,7 @@ class ShegerPay {
      * });
      */
     async verify(params) {
-        const { transactionId, amount, provider, merchantName, subProvider } = params;
+        const { transactionId, amount, provider, merchantName, subProvider, senderAccount } = params;
         
         if (!transactionId) {
             throw new ValidationError('transactionId is required');
@@ -74,10 +74,12 @@ class ShegerPay {
             throw new ValidationError('amount is required');
         }
         
-        // Auto-detect provider
         let detectedProvider = provider;
         if (!detectedProvider) {
-            detectedProvider = transactionId.toUpperCase().startsWith('FT') ? 'cbe' : 'telebirr';
+            detectedProvider = transactionId.toLowerCase().includes('cs.bankofabyssinia.com/slip/?trx=') ? 'boa' : null;
+        }
+        if (!detectedProvider) {
+            throw new ValidationError('provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().');
         }
         
         const data = new URLSearchParams();
@@ -89,6 +91,9 @@ class ShegerPay {
         if (subProvider) {
             data.append('sub_provider', subProvider);
         }
+        if (senderAccount) {
+            data.append('sender_account', senderAccount);
+        }
         
         return this._request('POST', '/api/v1/verify', data);
     }
@@ -99,12 +104,38 @@ class ShegerPay {
      * @param {number} amount - Expected amount
      * @returns {Promise<Object>} Verification result
      */
-    async quickVerify(transactionId, amount) {
+    async quickVerify(transactionId, amount, options = {}) {
         const data = new URLSearchParams();
         data.append('transaction_id', transactionId);
         data.append('amount', amount.toString());
+        if (options.expectedProvider) {
+            data.append('expected_provider', options.expectedProvider);
+        }
+        if (options.senderAccount) {
+            data.append('sender_account', options.senderAccount);
+        }
         
         return this._request('POST', '/api/v1/quick-verify', data);
+    }
+
+    /**
+     * Verify a receipt image/PDF using OCR. Pass a browser File/Blob or Node.js FormData-compatible value.
+     */
+    async verifyImage(params) {
+        const { screenshot, amount, provider, merchantName, transactionId, phoneNumber, senderAccount } = params;
+        if (!screenshot) throw new ValidationError('screenshot is required');
+        if (!amount) throw new ValidationError('amount is required');
+
+        const form = new FormData();
+        form.append('screenshot', screenshot);
+        form.append('amount', amount.toString());
+        if (provider) form.append('provider', provider);
+        if (merchantName) form.append('merchant_name', merchantName);
+        if (transactionId) form.append('transaction_id', transactionId);
+        if (phoneNumber) form.append('phone_number', phoneNumber);
+        if (senderAccount) form.append('sender_account', senderAccount);
+
+        return this._request('POST', '/api/v1/verify-image', form, false);
     }
     
     /**
@@ -464,6 +495,30 @@ class ShegerPay {
     async paypalStatus() {
         return this._request('GET', '/api/v1/paypal/status');
     }
+
+    async paypalGetWalletBalance() {
+        return this._request('GET', '/api/v1/paypal/wallet/balance');
+    }
+
+    async paypalListWalletTransactions(limit = 50) {
+        return this._request('GET', `/api/v1/paypal/wallet/transactions?limit=${limit}`);
+    }
+
+    async paypalRequestPayout(params) {
+        const { amount, currency, recipientEmail, note } = params;
+        if (!amount) throw new ValidationError('amount is required');
+        if (!recipientEmail) throw new ValidationError('recipientEmail is required');
+        return this._request('POST', '/api/v1/paypal/payouts/request', {
+            amount,
+            currency: currency || 'USD',
+            recipient_email: recipientEmail,
+            note
+        }, true);
+    }
+
+    async paypalListPayouts() {
+        return this._request('GET', '/api/v1/paypal/payouts');
+    }
     
     // ============================================
     // 🔗 PAYMENT LINKS
@@ -525,7 +580,7 @@ class ShegerPay {
      * @returns {Promise<Object>} All currency balances
      */
     async getWalletBalance() {
-        return this._request('GET', '/api/v1/wallets/balances');
+        return this.paypalGetWalletBalance();
     }
     
     /**
@@ -537,12 +592,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Conversion result
      */
     async convertCurrency(params) {
-        const { fromCurrency, toCurrency, amount } = params;
-        return this._request('POST', '/api/v1/wallets/convert', {
-            from_currency: fromCurrency,
-            to_currency: toCurrency,
-            amount
-        }, true);
+        throw new ShegerPayError('Currency conversion is not part of the public SDK. Use PayPal wallet endpoints or contact support for assisted/private rails.', 400);
     }
     
     // ============================================
@@ -625,16 +675,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Payout request
      */
     async requestPayout(params) {
-        const { amount, currency, method, destinationId } = params;
-        if (!amount) throw new ValidationError('amount is required');
-        if (!currency) throw new ValidationError('currency is required');
-        
-        return this._request('POST', '/api/v1/payouts', {
-            amount,
-            currency,
-            method: method || 'bank_transfer',
-            destination_id: destinationId
-        }, true);
+        return this.paypalRequestPayout(params);
     }
     
     /**
@@ -643,8 +684,7 @@ class ShegerPay {
      * @returns {Promise<Array>} List of payouts
      */
     async listPayouts(status = null) {
-        const params = status ? `?status=${status}` : '';
-        return this._request('GET', `/api/v1/payouts${params}`);
+        return this.paypalListPayouts();
     }
     
     // ============================================
@@ -659,14 +699,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Account details
      */
     async addWiseAccount(params) {
-        const { email, label } = params;
-        if (!email) throw new ValidationError('email is required');
-        
-        return this._request('POST', '/api/v1/international/wallet-accounts', {
-            provider: 'wise',
-            email,
-            label
-        }, true);
+        throw new ShegerPayError('Wise account setup is private/assisted and is intentionally not exposed in the public SDK.', 400);
     }
     
     /**
@@ -677,14 +710,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Account details
      */
     async addPayoneerAccount(params) {
-        const { email, label } = params;
-        if (!email) throw new ValidationError('email is required');
-        
-        return this._request('POST', '/api/v1/international/wallet-accounts', {
-            provider: 'payoneer',
-            email,
-            label
-        }, true);
+        throw new ShegerPayError('Payoneer account setup is private/assisted and is intentionally not exposed in the public SDK.', 400);
     }
     
     /**
@@ -693,15 +719,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Account details
      */
     async addBankAccount(params) {
-        const { type, bankName, accountNumber, beneficiaryName, swiftCode, iban } = params;
-        return this._request('POST', '/api/v1/international/bank-accounts', {
-            type,
-            bank_name: bankName,
-            account_number: accountNumber,
-            beneficiary_name: beneficiaryName,
-            swift_code: swiftCode,
-            iban
-        }, true);
+        throw new ShegerPayError('International bank account setup is private/assisted and is intentionally not exposed in the public SDK.', 400);
     }
     
     /**
@@ -836,7 +854,7 @@ class ShegerPay {
      * @returns {Promise<Object>} Subscription details
      */
     async getSubscription() {
-        return this._request('GET', '/api/v1/subscriptions/current');
+        return this._request('GET', '/api/v1/subscriptions/status');
     }
     
     /**
@@ -844,7 +862,7 @@ class ShegerPay {
      * @returns {Promise<Object>} API usage statistics
      */
     async getUsage() {
-        return this._request('GET', '/api/v1/subscriptions/usage');
+        return this._request('GET', '/api/v1/analytics/api-usage');
     }
     
     // ============================================
@@ -940,7 +958,7 @@ class ShegerPay {
         const url = `${this.baseUrl}${path}`;
         
         const headers = {
-            'Authorization': `Bearer ${this.apiKey}`,
+            'X-API-Key': this.apiKey,
             'User-Agent': 'ShegerPay-JavaScript-SDK/1.0'
         };
         
@@ -950,7 +968,9 @@ class ShegerPay {
         };
         
         if (data) {
-            if (isJson) {
+            if (typeof FormData !== 'undefined' && data instanceof FormData) {
+                options.body = data;
+            } else if (isJson) {
                 headers['Content-Type'] = 'application/json';
                 options.body = JSON.stringify(data);
             } else {
@@ -979,8 +999,15 @@ class ShegerPay {
                 throw new ValidationError(error.detail || 'Validation error');
             }
             
-            if (response.status >= 500) {
-                throw new ShegerPayError('Server error', response.status);
+            if ([402, 403, 429, 503].includes(response.status) || response.status >= 500) {
+                let message = 'Request failed';
+                try {
+                    const error = await response.json();
+                    message = error.detail || error.message || message;
+                } catch (_) {
+                    message = response.status >= 500 ? 'Server error' : message;
+                }
+                throw new ShegerPayError(message, response.status);
             }
             
             return response.json();

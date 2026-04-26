@@ -8,7 +8,7 @@
      * @return array
      */
     public function getWalletBalance() {
-        return $this->request('GET', '/api/v1/wallets/balances');
+        return $this->request('GET', '/api/v1/paypal/wallet/balance');
     }
 
     /**
@@ -19,11 +19,7 @@
      * @return array
      */
     public function convertCurrency($fromCurrency, $toCurrency, $amount) {
-        return $this->request('POST', '/api/v1/wallets/convert', [
-            'from_currency' => $fromCurrency,
-            'to_currency' => $toCurrency,
-            'amount' => $amount
-        ], true);
+        throw new \Exception('Currency conversion is private/assisted and is not exposed in the public SDK.');
     }
 
     /**

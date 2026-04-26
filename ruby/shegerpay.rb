@@ -20,9 +20,10 @@ module ShegerPay
   
   # Verification result
   class VerificationResult
-    attr_reader :valid, :status, :provider, :transaction_id, :amount, :reason, :mode
+    attr_reader :verified, :valid, :status, :provider, :transaction_id, :amount, :reason, :mode
     
     def initialize(data)
+      @verified = data['verified'] || data['valid'] || false
       @valid = data['valid'] || false
       @status = data['status'] || 'unknown'
       @provider = data['provider']
@@ -67,12 +68,13 @@ module ShegerPay
       amount = params[:amount]
       provider = params[:provider]
       merchant_name = params[:merchant_name] || 'ShegerPay Verification'
+      sender_account = params[:sender_account]
       
       raise ValidationError, 'transaction_id is required' unless transaction_id
       raise ValidationError, 'amount is required' unless amount
       
-      # Auto-detect provider
-      provider ||= transaction_id.upcase.start_with?('FT') ? 'cbe' : 'telebirr'
+      provider ||= transaction_id.downcase.include?('cs.bankofabyssinia.com/slip/?trx=') ? 'boa' : nil
+      raise ValidationError, 'provider is required for ambiguous transaction references. Pass provider explicitly or use quick_verify.' unless provider
       
       data = {
         provider: provider,
@@ -81,6 +83,7 @@ module ShegerPay
         merchant_name: merchant_name
       }
       data[:sub_provider] = params[:sub_provider] if params[:sub_provider]
+      data[:sender_account] = sender_account if sender_account
       
       response = request(:post, '/api/v1/verify', data)
       VerificationResult.new(response)
@@ -91,11 +94,14 @@ module ShegerPay
     # @param transaction_id [String] Bank transaction reference
     # @param amount [Float] Expected amount
     # @return [VerificationResult]
-    def quick_verify(transaction_id, amount)
-      response = request(:post, '/api/v1/quick-verify', {
+    def quick_verify(transaction_id, amount, expected_provider = nil, sender_account = nil)
+      payload = {
         transaction_id: transaction_id,
         amount: amount
-      })
+      }
+      payload[:expected_provider] = expected_provider if expected_provider
+      payload[:sender_account] = sender_account if sender_account
+      response = request(:post, '/api/v1/quick-verify', payload)
       VerificationResult.new(response)
     end
     
@@ -139,7 +145,7 @@ module ShegerPay
         request['Content-Type'] = 'application/x-www-form-urlencoded'
       end
       
-      request['Authorization'] = "Bearer #{@api_key}"
+      request['X-API-Key'] = @api_key
       request['User-Agent'] = 'ShegerPay-Ruby-SDK/1.0'
       
       response = http.request(request)

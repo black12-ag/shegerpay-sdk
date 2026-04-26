@@ -18,7 +18,7 @@ import javax.crypto.spec.SecretKeySpec;
  * 
  * Usage:
  *   ShegerPay client = new ShegerPay("sk_test_xxx");
- *   VerificationResult result = client.verify("FT123456", 100);
+ *   VerificationResult result = client.verify("FT123456", 100, "cbe", "My Shop");
  * 
  * @version 1.0.0
  */
@@ -61,7 +61,7 @@ public class ShegerPay {
      * Verify a payment transaction
      */
     public VerificationResult verify(String transactionId, double amount) throws ShegerPayException {
-        return verify(transactionId, amount, null, null);
+        return verify(transactionId, amount, null, null, null);
     }
     
     /**
@@ -69,14 +69,21 @@ public class ShegerPay {
      */
     public VerificationResult verify(String transactionId, double amount, String provider, String merchantName) 
             throws ShegerPayException {
+        return verify(transactionId, amount, provider, merchantName, null);
+    }
+
+    public VerificationResult verify(String transactionId, double amount, String provider, String merchantName, String senderAccount)
+            throws ShegerPayException {
         
         if (transactionId == null || transactionId.isEmpty()) {
             throw new ShegerPayException("Transaction ID is required");
         }
         
-        // Auto-detect provider
         if (provider == null || provider.isEmpty()) {
-            provider = transactionId.toUpperCase().startsWith("FT") ? "cbe" : "telebirr";
+            provider = transactionId.toLowerCase().contains("cs.bankofabyssinia.com/slip/?trx=") ? "boa" : null;
+        }
+        if (provider == null || provider.isEmpty()) {
+            throw new ShegerPayException("provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().");
         }
         
         if (merchantName == null) {
@@ -88,6 +95,9 @@ public class ShegerPay {
         data.put("transaction_id", transactionId);
         data.put("amount", String.valueOf(amount));
         data.put("merchant_name", merchantName);
+        if (senderAccount != null && !senderAccount.isEmpty()) {
+            data.put("sender_account", senderAccount);
+        }
         
         Map<String, Object> response = doRequest("POST", "/api/v1/verify", data);
         return new VerificationResult(response);
@@ -97,9 +107,19 @@ public class ShegerPay {
      * Quick verification with auto-detected provider
      */
     public VerificationResult quickVerify(String transactionId, double amount) throws ShegerPayException {
+        return quickVerify(transactionId, amount, null, null);
+    }
+
+    public VerificationResult quickVerify(String transactionId, double amount, String expectedProvider, String senderAccount) throws ShegerPayException {
         Map<String, String> data = new HashMap<>();
         data.put("transaction_id", transactionId);
         data.put("amount", String.valueOf(amount));
+        if (expectedProvider != null && !expectedProvider.isEmpty()) {
+            data.put("expected_provider", expectedProvider);
+        }
+        if (senderAccount != null && !senderAccount.isEmpty()) {
+            data.put("sender_account", senderAccount);
+        }
         
         Map<String, Object> response = doRequest("POST", "/api/v1/quick-verify", data);
         return new VerificationResult(response);
@@ -116,7 +136,7 @@ public class ShegerPay {
             conn.setRequestMethod(method);
             conn.setConnectTimeout(timeout);
             conn.setReadTimeout(timeout);
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            conn.setRequestProperty("X-API-Key", apiKey);
             conn.setRequestProperty("User-Agent", "ShegerPay-Java-SDK/" + VERSION);
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
             

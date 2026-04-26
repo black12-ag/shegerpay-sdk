@@ -3,14 +3,14 @@
   "version": "2.1.0",
   "description": "Official TypeScript SDK for ShegerPay Payment Verification Gateway",
   "main": "dist/shegerpay.js",
-  "module": "dist/shegerpay.mjs",
+  "module": "dist/shegerpay.js",
   "types": "dist/shegerpay.d.ts",
   "files": [
     "dist",
-    "src"
+    "README.md"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
+    "build": "tsc",
     "prepublishOnly": "npm run build"
   },
   "repository": {

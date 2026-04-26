@@ -73,12 +73,16 @@ class ShegerPay {
         $amount = $params['amount'] ?? null;
         $provider = $params['provider'] ?? null;
         $merchantName = $params['merchant_name'] ?? 'ShegerPay Verification';
+        $senderAccount = $params['sender_account'] ?? null;
         
         if (!$transactionId) throw new ValidationException('transaction_id is required');
         if (!$amount) throw new ValidationException('amount is required');
         
         if (!$provider) {
-            $provider = strtoupper(substr($transactionId, 0, 2)) === 'FT' ? 'cbe' : 'telebirr';
+            $provider = stripos($transactionId, 'cs.bankofabyssinia.com/slip/?trx=') !== false ? 'boa' : null;
+        }
+        if (!$provider) {
+            throw new ValidationException('provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().');
         }
         
         $data = [
@@ -91,16 +95,26 @@ class ShegerPay {
         if (isset($params['sub_provider'])) {
             $data['sub_provider'] = $params['sub_provider'];
         }
+        if ($senderAccount) {
+            $data['sender_account'] = $senderAccount;
+        }
         
         $response = $this->request('POST', '/api/v1/verify', $data);
         return new VerificationResult($response);
     }
     
-    public function quickVerify(string $transactionId, float $amount): VerificationResult {
-        $response = $this->request('POST', '/api/v1/quick-verify', [
+    public function quickVerify(string $transactionId, float $amount, ?string $expectedProvider = null, ?string $senderAccount = null): VerificationResult {
+        $payload = [
             'transaction_id' => $transactionId,
             'amount' => $amount,
-        ]);
+        ];
+        if ($expectedProvider) {
+            $payload['expected_provider'] = $expectedProvider;
+        }
+        if ($senderAccount) {
+            $payload['sender_account'] = $senderAccount;
+        }
+        $response = $this->request('POST', '/api/v1/quick-verify', $payload);
         return new VerificationResult($response);
     }
     
@@ -205,15 +219,11 @@ class ShegerPay {
     // ============================================
     
     public function getWalletBalance(): array {
-        return $this->request('GET', '/api/v1/wallets/balances');
+        return $this->request('GET', '/api/v1/paypal/wallet/balance');
     }
     
     public function convertCurrency(string $from, string $to, float $amount): array {
-        return $this->requestJson('POST', '/api/v1/wallets/convert', [
-            'from_currency' => $from,
-            'to_currency' => $to,
-            'amount' => $amount,
-        ]);
+        throw new ShegerPayException('Currency conversion is private/assisted and is not exposed in the public SDK.');
     }
     
     // ============================================
@@ -256,18 +266,15 @@ class ShegerPay {
     // ============================================
     
     public function requestPayout(float $amount, string $currency, string $method = 'bank_transfer', ?string $destinationId = null): array {
-        return $this->requestJson('POST', '/api/v1/payouts', [
+        return $this->requestJson('POST', '/api/v1/paypal/payouts/request', [
             'amount' => $amount,
             'currency' => $currency,
-            'method' => $method,
-            'destination_id' => $destinationId,
+            'recipient_email' => $destinationId,
         ]);
     }
     
     public function listPayouts(?string $status = null): array {
-        $path = '/api/v1/payouts';
-        if ($status) $path .= '?status=' . $status;
-        return $this->request('GET', $path);
+        return $this->request('GET', '/api/v1/paypal/payouts');
     }
     
     // ============================================
@@ -275,19 +282,11 @@ class ShegerPay {
     // ============================================
     
     public function addWiseAccount(string $email, ?string $label = null): array {
-        return $this->requestJson('POST', '/api/v1/international/wallet-accounts', [
-            'provider' => 'wise',
-            'email' => $email,
-            'label' => $label,
-        ]);
+        throw new ShegerPayException('Wise account setup is private/assisted and is not exposed in the public SDK.');
     }
     
     public function addPayoneerAccount(string $email, ?string $label = null): array {
-        return $this->requestJson('POST', '/api/v1/international/wallet-accounts', [
-            'provider' => 'payoneer',
-            'email' => $email,
-            'label' => $label,
-        ]);
+        throw new ShegerPayException('Payoneer account setup is private/assisted and is not exposed in the public SDK.');
     }
     
     public function getGmailStatus(): array {
@@ -336,11 +335,11 @@ class ShegerPay {
     }
     
     public function getSubscription(): array {
-        return $this->request('GET', '/api/v1/subscriptions/current');
+        return $this->request('GET', '/api/v1/subscriptions/status');
     }
     
     public function getUsage(): array {
-        return $this->request('GET', '/api/v1/subscriptions/usage');
+        return $this->request('GET', '/api/v1/analytics/api-usage');
     }
     
     // ============================================
@@ -355,7 +354,7 @@ class ShegerPay {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Authorization: Bearer ' . $this->apiKey,
+            'X-API-Key: ' . $this->apiKey,
             'Content-Type: application/x-www-form-urlencoded',
             'User-Agent: ShegerPay-PHP-SDK/2.1',
         ]);
@@ -388,7 +387,7 @@ class ShegerPay {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Authorization: Bearer ' . $this->apiKey,
+            'X-API-Key: ' . $this->apiKey,
             'Content-Type: application/json',
             'User-Agent: ShegerPay-PHP-SDK/2.1',
         ]);
@@ -484,6 +483,7 @@ class ShegerPay {
         $amount = $params['amount'] ?? null;
         $provider = $params['provider'] ?? null;
         $merchantName = $params['merchant_name'] ?? 'ShegerPay Verification';
+        $senderAccount = $params['sender_account'] ?? null;
         
         if (!$transactionId) {
             throw new ValidationException('transaction_id is required');
@@ -492,9 +492,11 @@ class ShegerPay {
             throw new ValidationException('amount is required');
         }
         
-        // Auto-detect provider
         if (!$provider) {
-            $provider = strtoupper(substr($transactionId, 0, 2)) === 'FT' ? 'cbe' : 'telebirr';
+            $provider = stripos($transactionId, 'cs.bankofabyssinia.com/slip/?trx=') !== false ? 'boa' : null;
+        }
+        if (!$provider) {
+            throw new ValidationException('provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().');
         }
         
         $data = [
@@ -506,6 +508,9 @@ class ShegerPay {
         
         if (isset($params['sub_provider'])) {
             $data['sub_provider'] = $params['sub_provider'];
+        }
+        if ($senderAccount) {
+            $data['sender_account'] = $senderAccount;
         }
         
         $response = $this->request('POST', '/api/v1/verify', $data);
@@ -519,11 +524,18 @@ class ShegerPay {
      * @param float $amount Expected amount
      * @return VerificationResult
      */
-    public function quickVerify(string $transactionId, float $amount): VerificationResult {
-        $response = $this->request('POST', '/api/v1/quick-verify', [
+    public function quickVerify(string $transactionId, float $amount, ?string $expectedProvider = null, ?string $senderAccount = null): VerificationResult {
+        $payload = [
             'transaction_id' => $transactionId,
             'amount' => $amount,
-        ]);
+        ];
+        if ($expectedProvider) {
+            $payload['expected_provider'] = $expectedProvider;
+        }
+        if ($senderAccount) {
+            $payload['sender_account'] = $senderAccount;
+        }
+        $response = $this->request('POST', '/api/v1/quick-verify', $payload);
         return new VerificationResult($response);
     }
     
@@ -548,7 +560,7 @@ class ShegerPay {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Authorization: Bearer ' . $this->apiKey,
+            'X-API-Key: ' . $this->apiKey,
             'Content-Type: application/x-www-form-urlencoded',
             'User-Agent: ShegerPay-PHP-SDK/1.0',
         ]);

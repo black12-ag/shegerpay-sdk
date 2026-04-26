@@ -3,23 +3,16 @@
 // WALLET METHODS
 // ============================================
 
-// GetWalletBalance gets multi-currency wallet balances
+// GetWalletBalance gets PayPal wallet balance.
 func (c *Client) GetWalletBalance() (map[string]interface{}, error) {
 	var result map[string]interface{}
-	err := c.request("GET", "/api/v1/wallets/balances", nil, &result)
+	err := c.request("GET", "/api/v1/paypal/wallet/balance", nil, &result)
 	return result, err
 }
 
-// ConvertCurrency converts currency within wallet
+// ConvertCurrency is private/assisted and not exposed in the public SDK.
 func (c *Client) ConvertCurrency(from, to string, amount float64) (map[string]interface{}, error) {
-	data := url.Values{}
-	data.Set("from_currency", from)
-	data.Set("to_currency", to)
-	data.Set("amount", fmt.Sprintf("%f", amount))
-	
-	var result map[string]interface{}
-	err := c.request("POST", "/api/v1/wallets/convert", data, &result)
-	return result, err
+	return nil, fmt.Errorf("currency conversion is private/assisted and is not exposed in the public SDK")
 }
 
 // ============================================

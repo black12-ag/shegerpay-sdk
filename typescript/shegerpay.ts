@@ -6,7 +6,7 @@
  * import { ShegerPay } from '@shegerpay/sdk';
  * 
  * const client = new ShegerPay('sk_test_xxx');
- * const result = await client.verify({ transactionId: 'FT123456', amount: 100 });
+ * const result = await client.verify({ transactionId: 'FT123456', amount: 100, provider: 'cbe' });
  */
 
 // ============================================
@@ -24,17 +24,27 @@ export interface VerifyParams {
   amount: number;
   provider?: 'cbe' | 'telebirr' | 'awash' | 'boa' | 'ebirr_kaafi' | 'ebirr_coop';
   merchantName?: string;
+  senderAccount?: string;
+}
+
+export interface QuickVerifyOptions {
+  expectedProvider?: 'cbe' | 'telebirr' | 'awash' | 'boa' | 'ebirr_kaafi' | 'ebirr_coop';
+  senderAccount?: string;
 }
 
 export interface VerificationResult {
+  verified: boolean;
   valid: boolean;
-  status: 'verified' | 'failed' | 'pending' | 'error';
+  status: 'verified' | 'failed' | 'pending' | 'processing' | 'error';
   provider?: string;
   transactionId?: string;
   amount?: number;
   payer?: string;
   receiver?: string;
   mode: 'test' | 'live';
+  requestId?: string;
+  referenceId?: string;
+  saved?: boolean;
   errorCode?: string;
   message?: string;
   suggestion?: string;
@@ -62,6 +72,15 @@ export interface PaymentLink {
   status: 'active' | 'inactive' | 'expired';
 }
 
+export interface PaymentLinkSubmissionParams {
+  shortCode: string;
+  paymentMethod: string;
+  transactionId: string;
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+}
+
 export interface WebhookParams {
   url: string;
   events: string[];
@@ -81,6 +100,19 @@ export interface CryptoPaymentParams {
   currency: 'USDT' | 'BTC' | 'ETH' | 'TRX';
   walletAddress: string;
   chain?: 'TRON' | 'ETH' | 'BSC' | 'BTC';
+}
+
+export interface PayPalOrderParams {
+  amount: number;
+  currency?: string;
+  description?: string;
+}
+
+export interface PayPalPayoutParams {
+  amount: number;
+  currency?: string;
+  recipientEmail: string;
+  note?: string;
 }
 
 export interface CryptoPayment {
@@ -191,30 +223,67 @@ export class ShegerPay {
    * Verify a payment transaction
    */
   async verify(params: VerifyParams): Promise<VerificationResult> {
-    const { transactionId, amount, provider, merchantName } = params;
+    const { transactionId, amount, provider, merchantName, senderAccount } = params;
     
     if (!transactionId) throw new ValidationError('transactionId is required');
     if (!amount) throw new ValidationError('amount is required');
     
-    // Auto-detect provider
-    const detectedProvider = provider || (transactionId.toUpperCase().startsWith('FT') ? 'cbe' : 'telebirr');
+    const detectedProvider = provider || (
+      transactionId.toLowerCase().includes('cs.bankofabyssinia.com/slip/?trx=')
+        ? 'boa'
+        : null
+    );
+
+    if (!detectedProvider) {
+      throw new ValidationError('provider is required for ambiguous transaction references. Pass provider explicitly or use quickVerify().');
+    }
     
     return this.request<VerificationResult>('POST', '/api/v1/verify', {
       provider: detectedProvider,
       transaction_id: transactionId,
       amount,
-      merchant_name: merchantName || 'ShegerPay Verification'
+      merchant_name: merchantName || 'ShegerPay Verification',
+      sender_account: senderAccount
     });
   }
 
   /**
    * Quick verification with auto-detected provider
    */
-  async quickVerify(transactionId: string, amount: number): Promise<VerificationResult> {
+  async quickVerify(transactionId: string, amount: number, options: QuickVerifyOptions = {}): Promise<VerificationResult> {
     return this.request<VerificationResult>('POST', '/api/v1/quick-verify', {
       transaction_id: transactionId,
-      amount
+      amount,
+      expected_provider: options.expectedProvider,
+      sender_account: options.senderAccount
     });
+  }
+
+  /**
+   * Verify a receipt image or PDF using OCR.
+   */
+  async verifyImage(params: {
+    screenshot: Blob | File;
+    amount: number;
+    provider?: string;
+    merchantName?: string;
+    transactionId?: string;
+    phoneNumber?: string;
+    senderAccount?: string;
+  }): Promise<VerificationResult> {
+    if (!params.screenshot) throw new ValidationError('screenshot is required');
+    if (!params.amount) throw new ValidationError('amount is required');
+
+    const form = new FormData();
+    form.append('screenshot', params.screenshot);
+    form.append('amount', String(params.amount));
+    if (params.provider) form.append('provider', params.provider);
+    if (params.merchantName) form.append('merchant_name', params.merchantName);
+    if (params.transactionId) form.append('transaction_id', params.transactionId);
+    if (params.phoneNumber) form.append('phone_number', params.phoneNumber);
+    if (params.senderAccount) form.append('sender_account', params.senderAccount);
+
+    return this.request<VerificationResult>('POST', '/api/v1/verify-image', form);
   }
 
   // ============================================
@@ -248,6 +317,49 @@ export class ShegerPay {
   async listPaymentLinks(): Promise<PaymentLink[]> {
     const response = await this.request<{ links: PaymentLink[] }>('GET', '/api/v1/payment-links/');
     return response.links || [];
+  }
+
+  /**
+   * Get public payment link details by short code.
+   */
+  async getPaymentLink(shortCode: string): Promise<PaymentLink> {
+    if (!shortCode) throw new ValidationError('shortCode is required');
+    return this.request('GET', `/api/v1/payment-links/${shortCode}`);
+  }
+
+  /**
+   * Check payment link status by short code.
+   */
+  async getPaymentLinkStatus(shortCode: string): Promise<Record<string, any>> {
+    if (!shortCode) throw new ValidationError('shortCode is required');
+    return this.request('GET', `/api/v1/payment-links/${shortCode}/status`);
+  }
+
+  /**
+   * Submit customer payment proof for a payment link.
+   */
+  async submitPaymentLink(params: PaymentLinkSubmissionParams): Promise<Record<string, any>> {
+    const { shortCode, paymentMethod, transactionId, customerName, customerEmail, customerPhone } = params;
+    if (!shortCode) throw new ValidationError('shortCode is required');
+    if (!paymentMethod) throw new ValidationError('paymentMethod is required');
+    if (!transactionId) throw new ValidationError('transactionId is required');
+
+    return this.request('POST', `/api/v1/payment-links/${shortCode}/submit`, {
+      payment_method: paymentMethod,
+      transaction_id: transactionId,
+      customer_name: customerName,
+      customer_email: customerEmail,
+      customer_phone: customerPhone
+    });
+  }
+
+  /**
+   * Verify a submitted payment link payment.
+   */
+  async verifyPaymentLink(shortCode: string, transactionId: string): Promise<VerificationResult> {
+    if (!shortCode) throw new ValidationError('shortCode is required');
+    if (!transactionId) throw new ValidationError('transactionId is required');
+    return this.request('POST', `/api/v1/payment-links/${shortCode}/verify`, { transaction_id: transactionId });
   }
 
   /**
@@ -339,6 +451,48 @@ export class ShegerPay {
   }
 
   // ============================================
+  // PayPal
+  // ============================================
+
+  async paypalStatus(): Promise<Record<string, any>> {
+    return this.request('GET', '/api/v1/paypal/status');
+  }
+
+  async createPayPalOrder(params: PayPalOrderParams): Promise<Record<string, any>> {
+    if (!params.amount) throw new ValidationError('amount is required');
+    return this.request('POST', '/api/v1/paypal/create-order', {
+      amount: params.amount,
+      currency: params.currency || 'USD',
+      description: params.description
+    });
+  }
+
+  async capturePayPalOrder(orderId: string): Promise<Record<string, any>> {
+    if (!orderId) throw new ValidationError('orderId is required');
+    return this.request('POST', '/api/v1/paypal/capture-order', { order_id: orderId });
+  }
+
+  async getPayPalOrder(orderId: string): Promise<Record<string, any>> {
+    if (!orderId) throw new ValidationError('orderId is required');
+    return this.request('GET', `/api/v1/paypal/order/${orderId}`);
+  }
+
+  async getPayPalWalletBalance(): Promise<Record<string, any>> {
+    return this.request('GET', '/api/v1/paypal/wallet/balance');
+  }
+
+  async requestPayPalPayout(params: PayPalPayoutParams): Promise<Record<string, any>> {
+    if (!params.amount) throw new ValidationError('amount is required');
+    if (!params.recipientEmail) throw new ValidationError('recipientEmail is required');
+    return this.request('POST', '/api/v1/paypal/payouts/request', {
+      amount: params.amount,
+      currency: params.currency || 'USD',
+      recipient_email: params.recipientEmail,
+      note: params.note
+    });
+  }
+
+  // ============================================
   // Monitoring & Health
   // ============================================
 
@@ -419,13 +573,6 @@ export class ShegerPay {
   /**
    * Get wallet balances
    */
-  async getWalletBalance(): Promise<Record<string, number>> {
-    return this.request('GET', '/api/v1/wallets/balances');
-  }
-
-  /**
-   * Get transaction history
-   */
   async listTransactions(filters?: { status?: string; provider?: string; limit?: number }): Promise<any[]> {
     const params = new URLSearchParams(filters as any).toString();
     return this.request('GET', `/api/v1/transactions/history${params ? '?' + params : ''}`);
@@ -435,28 +582,32 @@ export class ShegerPay {
    * Get current subscription
    */
   async getSubscription(): Promise<Record<string, any>> {
-    return this.request('GET', '/api/v1/subscriptions/current');
+    return this.request('GET', '/api/v1/subscriptions/status');
   }
 
   /**
    * Get API usage stats
    */
   async getUsage(): Promise<Record<string, any>> {
-    return this.request('GET', '/api/v1/subscriptions/usage');
+    return this.request('GET', '/api/v1/analytics/api-usage');
   }
 
   // ============================================
   // Internal Request Method
   // ============================================
 
-  private async request<T>(method: string, path: string, body?: Record<string, any>): Promise<T> {
+  private async request<T>(method: string, path: string, body?: Record<string, any> | FormData): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'Content-Type': 'application/json',
+      'X-API-Key': this.apiKey,
       'User-Agent': 'ShegerPay-TypeScript-SDK/1.0'
     };
+
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+    if (!isFormData) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     const options: RequestInit = {
       method,
@@ -464,7 +615,7 @@ export class ShegerPay {
     };
 
     if (body && method !== 'GET') {
-      options.body = JSON.stringify(body);
+      options.body = isFormData ? body : JSON.stringify(body);
     }
 
     try {
@@ -487,8 +638,15 @@ export class ShegerPay {
         throw new ValidationError(error.detail || error.message || 'Validation error');
       }
 
-      if (response.status >= 500) {
-        throw new ShegerPayError('Server error', response.status, 'GEN_001');
+      if ([402, 403, 429, 503].includes(response.status) || response.status >= 500) {
+        let message = 'Request failed';
+        try {
+          const error = await response.json();
+          message = error.detail || error.message || message;
+        } catch {
+          message = response.status >= 500 ? 'Server error' : message;
+        }
+        throw new ShegerPayError(message, response.status, 'GEN_001');
       }
 
       return response.json() as Promise<T>;

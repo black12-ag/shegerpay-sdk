@@ -5,7 +5,7 @@
     # Get multi-currency wallet balances
     # @return [Hash]
     def get_wallet_balance
-      request(:get, '/api/v1/wallets/balances')
+      request(:get, '/api/v1/paypal/wallet/balance')
     end
 
     # Convert currency within wallet
@@ -14,11 +14,7 @@
     # @param amount [Float] Amount to convert
     # @return [Hash]
     def convert_currency(from_currency, to_currency, amount)
-      request(:post, '/api/v1/wallets/convert', {
-        from_currency: from_currency,
-        to_currency: to_currency,
-        amount: amount
-      })
+      raise 'Currency conversion is private/assisted and is not exposed in the public SDK.'
     end
 
     # Get wallet transaction history

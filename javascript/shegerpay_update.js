@@ -16,7 +16,7 @@ class KyneSDK {
      * @returns {Promise<Object>} Wallet balances
      */
     async getWalletBalance() {
-        return this._request('GET', '/api/v1/wallets/balances');
+        return this._request('GET', '/api/v1/paypal/wallet/balance');
     }
 
     /**
@@ -28,12 +28,7 @@ class KyneSDK {
      * @returns {Promise<Object>} Conversion result
      */
     async convertCurrency(params) {
-        const { fromCurrency, toCurrency, amount } = params;
-        return this._request('POST', '/api/v1/wallets/convert', {
-            from_currency: fromCurrency,
-            to_currency: toCurrency,
-            amount
-        }, true);
+        throw new Error('Currency conversion is private/assisted and is not exposed in the public SDK.');
     }
 
     /**

@@ -22,6 +22,7 @@ const client = new ShegerPay("sk_test_xxx");
 const result = await client.verify({
   transactionId: "FT24352648751234",
   amount: 100,
+  provider: "cbe",
 });
 
 if (result.valid) {
@@ -33,26 +34,42 @@ if (result.valid) {
 
 - ✅ Full TypeScript support with complete type definitions
 - ✅ Ethiopian banks (CBE, Telebirr, Awash, BoA, etc.)
-- ✅ Auto provider detection
+- ✅ Safe provider detection for BOA receipt URLs
 - ✅ Crypto payments (USDT, BTC, ETH)
+- ✅ Receipt image/PDF OCR via `verifyImage`
+- ✅ PayPal checkout, wallet balance, and payout requests
 - ✅ Payment links with QR codes
 - ✅ Webhooks
-- ✅ Telegram notifications
-- ✅ Monitoring & health checks
+- ✅ Transaction history and monitoring
 
 ## API Reference
 
 ### Verification
 
 ```typescript
-// Verify with auto-detection
+// Verify with an explicit provider
 const result = await client.verify({
   transactionId: "FT24352648751234",
   amount: 100,
+  provider: "cbe",
 });
 
 // Quick verify
 const result = await client.quickVerify("FT24352648751234", 100);
+
+// BOA receipt verification
+const boaResult = await client.verify({
+  transactionId: "https://cs.bankofabyssinia.com/slip/?trx=FT26091B1X5152078",
+  amount: 100,
+  provider: "boa",
+  senderAccount: "52078",
+});
+
+// OCR receipt image/PDF verification
+const imageResult = await client.verifyImage({
+  screenshot: file,
+  amount: 500,
+});
 ```
 
 ### Payment Links
@@ -87,6 +104,26 @@ const payment = await client.createCryptoPayment({
 
 // Verify crypto payment
 const result = await client.verifyCryptoPayment(payment.referenceId);
+```
+
+### PayPal
+
+```typescript
+const order = await client.createPayPalOrder({
+  amount: 25,
+  currency: "USD",
+  description: "Order #123",
+});
+
+await client.capturePayPalOrder(order.id);
+
+const balance = await client.getPayPalWalletBalance();
+
+await client.requestPayPalPayout({
+  amount: 25,
+  currency: "USD",
+  recipientEmail: "merchant@example.com",
+});
 ```
 
 ### Webhooks
@@ -148,7 +185,7 @@ import {
 } from "@shegerpay/sdk";
 
 try {
-  const result = await client.verify({ transactionId: "FT123", amount: 100 });
+  const result = await client.verify({ transactionId: "FT123", amount: 100, provider: "cbe" });
 } catch (error) {
   if (error instanceof AuthenticationError) {
     console.log("Invalid API key");

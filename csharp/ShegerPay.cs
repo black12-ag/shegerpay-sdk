@@ -14,7 +14,7 @@ namespace ShegerPay.SDK
     /// 
     /// Usage:
     ///   var client = new ShegerPayClient("sk_test_xxx");
-    ///   var result = await client.VerifyAsync("FT123456", 100);
+    ///   var result = await client.VerifyAsync("FT123456", 100, provider: "cbe");
     /// </summary>
     public class ShegerPayClient : IDisposable
     {
@@ -49,7 +49,7 @@ namespace ShegerPay.SDK
             
             _httpClient = new HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
-            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
+            _httpClient.DefaultRequestHeaders.Add("X-API-Key", _apiKey);
             _httpClient.DefaultRequestHeaders.Add("User-Agent", $"ShegerPay-CSharp-SDK/{Version}");
         }
         
@@ -57,13 +57,14 @@ namespace ShegerPay.SDK
         /// Verify a payment transaction
         /// </summary>
         public async Task<VerificationResult> VerifyAsync(string transactionId, double amount, 
-            string provider = null, string merchantName = null)
+            string provider = null, string merchantName = null, string senderAccount = null)
         {
             if (string.IsNullOrEmpty(transactionId))
                 throw new ShegerPayException("Transaction ID is required");
             
-            // Auto-detect provider
-            provider ??= transactionId.ToUpper().StartsWith("FT") ? "cbe" : "telebirr";
+            provider ??= transactionId.ToLower().Contains("cs.bankofabyssinia.com/slip/?trx=") ? "boa" : null;
+            if (string.IsNullOrEmpty(provider))
+                throw new ShegerPayException("provider is required for ambiguous transaction references. Pass provider explicitly or use QuickVerifyAsync().");
             merchantName ??= "ShegerPay Verification";
             
             var data = new Dictionary<string, string>
@@ -73,6 +74,8 @@ namespace ShegerPay.SDK
                 ["amount"] = amount.ToString(),
                 ["merchant_name"] = merchantName
             };
+            if (!string.IsNullOrEmpty(senderAccount))
+                data["sender_account"] = senderAccount;
             
             var response = await DoRequestAsync("POST", "/api/v1/verify", data);
             return new VerificationResult(response);
@@ -81,13 +84,17 @@ namespace ShegerPay.SDK
         /// <summary>
         /// Quick verification with auto-detected provider
         /// </summary>
-        public async Task<VerificationResult> QuickVerifyAsync(string transactionId, double amount)
+        public async Task<VerificationResult> QuickVerifyAsync(string transactionId, double amount, string expectedProvider = null, string senderAccount = null)
         {
             var data = new Dictionary<string, string>
             {
                 ["transaction_id"] = transactionId,
                 ["amount"] = amount.ToString()
             };
+            if (!string.IsNullOrEmpty(expectedProvider))
+                data["expected_provider"] = expectedProvider;
+            if (!string.IsNullOrEmpty(senderAccount))
+                data["sender_account"] = senderAccount;
             
             var response = await DoRequestAsync("POST", "/api/v1/quick-verify", data);
             return new VerificationResult(response);

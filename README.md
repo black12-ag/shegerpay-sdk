@@ -15,26 +15,37 @@ Official SDKs for integrating ShegerPay Payment Verification into your applicati
 from shegerpay import ShegerPay
 
 client = ShegerPay(api_key="sk_test_xxx")
-result = client.verify("FT24352648751234", 100)  # ✅ Done!
+result = client.verify(transaction_id="FT24352648751234", amount=100, provider="cbe")  # Done
 ```
+
+For BOA, use the full BOA receipt URL or full `trx` lookup value and include the sender account number.
 
 ---
 
-## 📦 Supported Languages (11)
+## 📦 Supported Languages (13)
 
-| Language         | Package             | Installation                                    | Status   |
-| ---------------- | ------------------- | ----------------------------------------------- | -------- |
-| **TypeScript**   | `@shegerpay/sdk`    | `npm install @shegerpay/sdk`                    | ✅ Ready |
-| **Python**       | `shegerpay`         | `pip install shegerpay`                         | ✅ Ready |
-| **JavaScript**   | `@shegerpay/sdk`    | `npm install @shegerpay/sdk`                    | ✅ Ready |
-| **PHP**          | `shegerpay/sdk`     | `composer require shegerpay/sdk`                | ✅ Ready |
-| **Ruby**         | `shegerpay`         | `gem install shegerpay`                         | ✅ Ready |
-| **Go**           | `shegerpay`         | `go get github.com/black12-ag/shegerpay-sdk/go` | ✅ Ready |
-| **Java**         | `com.shegerpay:sdk` | Maven                                           | ✅ Ready |
-| **C#**           | `ShegerPay.SDK`     | `dotnet add package ShegerPay.SDK`              | ✅ Ready |
-| **Kotlin**       | `com.shegerpay:sdk` | Gradle                                          | ✅ Ready |
-| **Swift**        | `ShegerPay`         | Swift Package Manager                           | ✅ Ready |
-| **Dart/Flutter** | `shegerpay`         | `dart pub add shegerpay`                        | ✅ Ready |
+| Language         | Package             | Installation                                | Status   |
+| ---------------- | ------------------- | ------------------------------------------- | -------- |
+| **iOS (Swift)**  | `ShegerPaySDK`      | Swift Package Manager                       | ✅ Ready |
+| **Android**      | `com.shegerpay:sdk` | `implementation("com.shegerpay:sdk:2.0.0")` | ✅ Ready |
+| **TypeScript**   | `@shegerpay/sdk`    | `npm install @shegerpay/sdk`                | ✅ Ready |
+| **Python**       | `shegerpay`         | `pip install shegerpay`                     | ✅ Ready |
+| **JavaScript**   | `@shegerpay/sdk`    | `npm install @shegerpay/sdk`                | ✅ Ready |
+| **PHP**          | `shegerpay/sdk`     | `composer require shegerpay/sdk`            | ✅ Ready |
+| **Ruby**         | `shegerpay`         | `gem install shegerpay`                     | ✅ Ready |
+| **Go**           | `shegerpay`         | `go get github.com/shegerpay/sdk-go`        | ✅ Ready |
+| **Java**         | `com.shegerpay:sdk` | Maven                                       | ✅ Ready |
+| **C#**           | `ShegerPay.SDK`     | `dotnet add package ShegerPay.SDK`          | ✅ Ready |
+| **Kotlin**       | `com.shegerpay:sdk` | Gradle                                      | ✅ Ready |
+| **Swift**        | `ShegerPaySDK`      | Swift Package Manager                       | ✅ Ready |
+| **Dart/Flutter** | `shegerpay`         | `dart pub add shegerpay`                    | ✅ Ready |
+
+### 📱 Native Mobile SDKs
+
+| Platform    | Min Version | Installation             |
+| ----------- | ----------- | ------------------------ |
+| **iOS**     | iOS 15+     | `sdk/ios/` - SPM Package |
+| **Android** | API 21+     | `sdk/android/` - Gradle  |
 
 ---
 
@@ -46,7 +57,7 @@ result = client.verify("FT24352648751234", 100)  # ✅ Done!
 from shegerpay import ShegerPay
 
 client = ShegerPay(api_key="sk_test_xxx")
-result = client.verify(transaction_id="FT24352648751234", amount=100)
+result = client.verify(transaction_id="FT24352648751234", amount=100, provider="cbe")
 
 if result.valid:
     print("✅ Payment verified!")
@@ -61,6 +72,7 @@ const client = new ShegerPay("sk_test_xxx");
 const result = await client.verify({
   transactionId: "FT24352648751234",
   amount: 100,
+  provider: "cbe",
 });
 
 if (result.valid) console.log("✅ Payment verified!");
@@ -72,7 +84,8 @@ if (result.valid) console.log("✅ Payment verified!");
 $client = new ShegerPay\Client('sk_test_xxx');
 $result = $client->verify([
     'transaction_id' => 'FT24352648751234',
-    'amount' => 100
+    'amount' => 100,
+    'provider' => 'cbe'
 ]);
 
 if ($result->valid) echo '✅ Payment verified!';
@@ -82,7 +95,7 @@ if ($result->valid) echo '✅ Payment verified!';
 
 ```ruby
 client = ShegerPay::Client.new('sk_test_xxx')
-result = client.verify(transaction_id: 'FT24352648751234', amount: 100)
+result = client.verify(transaction_id: 'FT24352648751234', amount: 100, provider: 'cbe')
 
 puts '✅ Payment verified!' if result.valid?
 ```
@@ -94,6 +107,7 @@ client, _ := shegerpay.NewClient("sk_test_xxx")
 result, _ := client.Verify(shegerpay.VerifyParams{
     TransactionID: "FT24352648751234",
     Amount: 100,
+    Provider: "cbe",
 })
 
 if result.Valid {
@@ -105,7 +119,7 @@ if result.Valid {
 
 ```java
 ShegerPayClient client = new ShegerPay("sk_test_xxx");
-VerificationResult result = client.verify("FT24352648751234", 100);
+VerificationResult result = client.verify("FT24352648751234", 100, "cbe", "My Shop");
 
 if (result.isValid()) {
     System.out.println("✅ Payment verified!");
@@ -118,7 +132,7 @@ if (result.isValid()) {
 using ShegerPay.SDK;
 
 var client = new ShegerPayClient("sk_test_xxx");
-var result = await client.VerifyAsync("FT24352648751234", 100);
+var result = await client.VerifyAsync("FT24352648751234", 100, provider: "cbe");
 
 if (result.Valid) Console.WriteLine("✅ Payment verified!");
 ```
@@ -127,7 +141,7 @@ if (result.Valid) Console.WriteLine("✅ Payment verified!");
 
 ```kotlin
 val client = ShegerPay("sk_test_xxx")
-val result = client.verify("FT24352648751234", 100.0)
+val result = client.verify("FT24352648751234", 100.0, provider = "cbe")
 
 if (result.valid) println("✅ Payment verified!")
 ```
@@ -136,7 +150,7 @@ if (result.valid) println("✅ Payment verified!")
 
 ```swift
 let client = try ShegerPay(apiKey: "sk_test_xxx")
-let result = try await client.verify(transactionId: "FT24352648751234", amount: 100)
+let result = try await client.verify(transactionId: "FT24352648751234", amount: 100, provider: .cbe)
 
 if result.valid { print("✅ Payment verified!") }
 ```
@@ -145,22 +159,29 @@ if result.valid { print("✅ Payment verified!") }
 
 ```dart
 final client = ShegerPay('sk_test_xxx');
-final result = await client.verify('FT24352648751234', 100);
+final result = await client.verify('FT24352648751234', 100, provider: 'cbe');
 
 if (result.valid) print('✅ Payment verified!');
 ```
 
 ---
 
+## BOA Notes
+
+- BOA verification uses the full receipt URL or full `trx` lookup value.
+- BOA requests must include `sender_account` or `senderAccount`.
+- Short `FT...` references alone are not enough for BOA.
+
 ## ✨ Features
 
 - ✅ **Simple API** - 3 lines to verify a payment
 - ✅ **Ethiopian Banks** - CBE & Telebirr verification
-- ✅ **Auto-detection** - Automatically detects bank from transaction ID
+- ✅ **Auto-detection** - Automatically detects BOA receipt URLs; pass provider explicitly for ambiguous transaction IDs
+- ✅ **Receipt OCR** - Verify receipt images/PDFs with `/verify-image`
 - ✅ **Payment Links** - Create QR codes for customers
+- ✅ **PayPal** - Checkout, wallet balance, and payout request helpers
 - ✅ **Webhooks** - Real-time payment notifications
-- ✅ **Telegram Alerts** - Configure Telegram notifications for payments
-- ✅ **Monitoring** - Health checks, provider status, API metrics
+- ✅ **Monitoring** - Health checks, provider status, transaction history, and API metrics
 - ✅ **Error Codes** - Standardized error responses with suggestions
 - ✅ **Test Mode** - Simulate payments during development
 - ✅ **Type Safety** - Full TypeScript/typing support
@@ -205,7 +226,21 @@ const isValid = ShegerPay.verifyWebhookSignature(
 
 ---
 
-## � Security Best Practices
+## PayPal Payouts
+
+Public SDK payout helpers use PayPal payout requests only. Non-PayPal international wallet and bank-account setup is private/assisted and intentionally not promoted in public SDK docs.
+
+```javascript
+const payout = await client.paypalRequestPayout({
+  amount: 25,
+  currency: "USD",
+  recipientEmail: "merchant@example.com",
+});
+```
+
+---
+
+## 🔒 Security Best Practices
 
 ### API Key Security
 
@@ -275,7 +310,7 @@ pip install shegerpay
 # Use
 from shegerpay import ShegerPay
 client = ShegerPay('sk_test_xxx')
-result = client.verify('FT123456', 100)
+result = client.verify(transaction_id='FT123456', amount=100, provider='cbe')
 ```
 
 ### Step 4: Set Up Webhooks (Recommended)
@@ -300,7 +335,7 @@ All SDKs return standardized error codes:
 
 | Error Code | Meaning               | What to Do                      |
 | ---------- | --------------------- | ------------------------------- |
-| `AUTH_001` | Missing API key       | Add `Authorization` header      |
+| `AUTH_001` | Missing API key       | Add `X-API-Key` header          |
 | `AUTH_002` | Invalid API key       | Check key in Dashboard          |
 | `TX_001`   | Transaction not found | Verify transaction ID           |
 | `TX_002`   | Amount mismatch       | Check expected vs actual amount |
@@ -309,7 +344,7 @@ All SDKs return standardized error codes:
 
 ```python
 try:
-    result = client.verify('FT123', 100)
+    result = client.verify(transaction_id='FT123', amount=100, provider='cbe')
 except ShegerPayError as e:
     print(f"Error: {e.error_code}")
     print(f"Message: {e.message}")
